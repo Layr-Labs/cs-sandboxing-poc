@@ -10,13 +10,25 @@ fi
 # Make sure containerd dirs exist
 mkdir -p /var/lib/containerd /run/containerd /etc/containerd
 
+# Setup cgroup delegation (required for containerd to enforce resource limits)
+if [ -f /sys/fs/cgroup/cgroup.subtree_control ]; then
+  mkdir -p /sys/fs/cgroup/init.scope
+  echo $$ > /sys/fs/cgroup/init.scope/cgroup.procs || {
+    echo "ERROR: Failed to move process into cgroup" >&2
+    exit 1
+  }
+  echo "+cpu +cpuset +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control || {
+    echo "WARNING: Could not enable all cgroup controllers" >&2
+  }
+fi
+
 # runsc wrapper
 if [ ! -f /usr/local/bin/runsc-real ]; then
   echo "Creating runsc wrapper to ignore cgroups..."
   mv /usr/local/bin/runsc /usr/local/bin/runsc-real
   cat >/usr/local/bin/runsc <<'EOF'
 #!/bin/sh
-exec /usr/local/bin/runsc-real --ignore-cgroups "$@"
+exec /usr/local/bin/runsc-real "$@"
 EOF
   chmod +x /usr/local/bin/runsc
 fi
