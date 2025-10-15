@@ -22,17 +22,6 @@ if [ -f /sys/fs/cgroup/cgroup.subtree_control ]; then
   }
 fi
 
-# runsc wrapper
-if [ ! -f /usr/local/bin/runsc-real ]; then
-  echo "Creating runsc wrapper to ignore cgroups..."
-  mv /usr/local/bin/runsc /usr/local/bin/runsc-real
-  cat >/usr/local/bin/runsc <<'EOF'
-#!/bin/sh
-exec /usr/local/bin/runsc-real "$@"
-EOF
-  chmod +x /usr/local/bin/runsc
-fi
-
 # containerd config (native snapshotter for gVisor)
 cat >/etc/containerd/config.toml <<'EOF'
 version = 2
