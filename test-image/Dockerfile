@@ -8,7 +8,7 @@ LABEL tee.launch_policy.allow_env_override=IMAGE
 RUN apk add --no-cache bash
 
 # Copy test script
-COPY test-env-gvisor.sh /test-env-gvisor.sh
-RUN chmod +x /test-env-gvisor.sh
+COPY test.sh /test.sh
+RUN chmod +x /test.sh
 
-CMD ["/test-env-gvisor.sh"]
+CMD ["/test.sh"]

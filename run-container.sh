@@ -51,7 +51,6 @@ echo "Running image $IMAGE with gVisor..."
 export DOCKER_HOST=unix:///tmp/docker.sock
 
 docker run --rm \
-    --privileged \
     --runtime=runsc \
     -e MY_VAR=foo \
     "$IMAGE"

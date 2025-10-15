@@ -7,8 +7,8 @@ MACHINE_TYPE="c3-standard-8"
 IMAGE_FAMILY="confidential-space-debug"
 ZONE="us-central1-a"
 PROJECT="data-axiom-440223-j1"
-IMAGE_REF="docker.io/saucelord/cs-gvisor:latest"
-WORKLOAD_IMAGE="docker.io/saucelord/cs-basic-test:latest"
+IMAGE_REF="docker.io/saucelord/cs-sandbox:latest"
+WORKLOAD_IMAGE="docker.io/saucelord/sandbox-tester:latest"
 
 build() {
     if [ -n "$2" ]; then
