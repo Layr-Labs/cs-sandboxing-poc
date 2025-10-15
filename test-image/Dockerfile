@@ -1,11 +1,7 @@
 FROM alpine:latest
 
-# TEE labels
-LABEL tee.launch_policy.log_redirect=always
-LABEL tee.launch_policy.allow_env_override=IMAGE
-
 # Install basic tools
-RUN apk add --no-cache bash
+RUN apk add --no-cache bash curl
 
 # Copy test script
 COPY test.sh /test.sh
