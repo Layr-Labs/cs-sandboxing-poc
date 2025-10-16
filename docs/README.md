@@ -23,9 +23,14 @@ Our goals for the initial version of sandboxing are
 
 ## How?
 
-We sandbox by running a special "sandboxer" container as the CS workload container. This sandboxer container is passed in the actual customer workload container as an overridden `IMAGE` environment variable. The sandboxer starts a containerd daemon and then pulls and starts the customer `IMAGE` using containerd's `ctr` CLI with a gVisor (runsc) runtime configuration.
+We sandbox by running a special "sandboxer" container as the CS workload container. This sandboxer container is passed in the actual customer workload container as an overridden `IMAGE` environment variable. The sandboxer starts a containerd daemon and then pulls and starts the customer `IMAGE` using `nerdctl` (a Docker-compatible CLI for containerd) with a gVisor (runsc) runtime configuration.
 
-The current implementation uses `ctr` (containerd's basic CLI) since nerdctl/docker/podman all ran into several issues with cgroups and networking.
+### Current Implementation: `nerdctl`
+
+The current implementation uses `nerdctl` with the following configuration:
+- **Snapshotter**: Native snapshotter (`--snapshotter=native`) for gVisor compatibility
+- **Runtime**: Custom runsc wrapper with host networking (`--runtime=runsc-host`)
+- **Networking**: Host networking mode (`--net=host`)
 
 The POC successfully demonstrates:
 - Blocking access to the TEE server socket
@@ -33,36 +38,24 @@ The POC successfully demonstrates:
 - Internet egress from sandboxed containers
 - Dynamic port detection from container images
 - gVisor integration with host networking
+- Docker-compatible commands and features
 
-### Limitations of `ctr` Approach
-
-**Resource Management:**
-- **Memory/CPU limits**: Possible but require manual cgroup configuration - not automatic like Docker's `--memory` or `--cpus` flags
-- **Resource enforcement**: Must be explicitly configured through cgroup parameters, no built-in guardrails
+### Limitations of Current Approach
 
 **Networking:**
-- **No network isolation**: Container uses `--network=host`, sharing the host's network namespace - no network-level sandboxing
-- **Port publishing**: No automatic port mapping - requires manual iptables rules (current implementation)
-- **Container-to-container networking**: Using host networking as workaround - no bridge networks or container DNS resolution
+- **No network isolation**: Containers use `--net=host`, sharing the host's network namespace - no network-level sandboxing
 - **Security implication**: Sandboxed workloads can see all network interfaces and ports on the host, though gVisor still provides process/filesystem isolation
+- **Port publishing**: Requires manual iptables rules (current implementation handles this automatically based on EXPOSE directives)
+- **Container-to-container networking**: No bridge networks or container DNS resolution between multiple containers
 
-**Operational Features:**
-- **No Docker Compose support**: Multi-container applications require custom orchestration
-- **No container logs command**: Logs must be redirected to files and monitored separately (current implementation)
-- **No automatic restart policies**: Containers don't restart on failure without custom logic
-- **Volume management**:
-  - Bind mounts work (mounting host directories into containers)
-  - No named volumes - can't create managed volumes like `docker volume create`
-  - No volume drivers - can't use cloud storage or distributed filesystem volumes
-  - No volume lifecycle management - can't list, inspect, or clean up volumes
-  - Data persistence between container restarts requires manual bind mount setup
-
-**Production Considerations:**
-- `ctr` is explicitly unsupported for production use by containerd maintainers
-- Commands/options not guaranteed to be stable across containerd versions
-- Designed as a debug tool, not a container orchestrator
-
-**Alternative:** Switching to `nerdctl` would provide Docker-like features (Compose, resource limits, networking, logs) but requires resolving cgroup delegation and gVisor networking compatibility in the Confidential Space environment.
+**What Works (thanks to nerdctl):**
+- **Docker Compose support**: `nerdctl compose` for multi-container applications
+- **Container logs**: `nerdctl logs` command available
+- **Automatic restart policies**: `nerdctl run --restart` supported
+- **Volume management**: Full support for named volumes, volume drivers, lifecycle management
+- **Resource limits**: Native support for `--memory`, `--cpus`, and other resource flags
+- **Production ready**: nerdctl is actively maintained and production-supported
+- **Stability**: Guaranteed API compatibility with Docker CLI
 
 Performance is the main consideration (outside of the thing actually working) with this new scheme.
 
