@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -49,69 +50,58 @@ func runDiagnostics() {
 
 	// 2. Check for gVisor
 	fmt.Println("\n2. Checking if running in gVisor:")
-	if checkGVisor() {
-		fmt.Println("✓ Found gVisor in dmesg")
+	err := checkGVisor()
+	if err != nil {
+		fmt.Println("✗ gVisor not detected", err)
 	} else {
-		fmt.Println("✗ No gVisor indicators in dmesg")
+		fmt.Println("✓ gVisor detected")
 	}
 
 	// 3. Capabilities
 	fmt.Println("\n3. Container capabilities:")
 	fmt.Println(getCapabilities())
 
-	// 4. Cgroup check
-	fmt.Println("\n4. Cgroup namespace check:")
-	if _, err := os.Stat("/sys/fs/cgroup"); err == nil {
-		fmt.Println("✓ /sys/fs/cgroup exists")
-		if out, err := runCommand("ls", "-la", "/sys/fs/cgroup/"); err == nil {
-			lines := strings.Split(out, "\n")
-			if len(lines) > 10 {
-				lines = lines[:10]
-			}
-			fmt.Println(strings.Join(lines, "\n"))
-		}
-	} else {
-		fmt.Println("✗ /sys/fs/cgroup not found")
-	}
-
-	// 5. Network configuration
-	fmt.Println("\n5. Network configuration:")
-	fmt.Println("Network interfaces:")
-	fmt.Println(getNetworkInterfaces())
-
-	fmt.Println("\nRouting table:")
-	fmt.Println(getRoutes())
-
-	fmt.Println("\nDNS configuration:")
-	fmt.Println(getDNS())
-
-	// 6. TEE attestation service
+	// 4. TEE attestation service
 	fmt.Println("\n6. Testing TEE attestation service (should fail outside Confidential Space):")
-	if checkTEESocket() {
-		fmt.Println("Found TEE socket (unexpected outside Confidential Space)")
+	err = checkTEESocketDoesNotExist()
+	if err != nil {
+		fmt.Println("✗ TEE socket found, unexpected:", err)
 	} else {
-		fmt.Println("✓ TEE socket not found (expected outside Confidential Space)")
+		fmt.Println("✓ TEE socket not found")
 	}
 
-	// 7. Internet connectivity
+	// 5. Internet connectivity
 	fmt.Println("\n7. Testing public internet connectivity:")
-	if checkInternet() {
-		fmt.Println("✓ Public internet is accessible")
+	err = checkInternet()
+	if err != nil {
+		fmt.Println("✗ Cannot reach public internet", err)
 	} else {
-		fmt.Println("✗ Cannot reach public internet")
-		fmt.Print(debugConnectivity())
+		fmt.Println("✓ Public internet is accessible")
 	}
 
-	fmt.Println("\n=== Test Complete ===")
+	// 6. File I/O test
+	fmt.Println("\n8. Checking file creation and deletion:")
+	err = checkFileIO()
+	if err != nil {
+		fmt.Println("✗ File I/O checks failed:", err)
+	} else {
+		fmt.Println("✓ File I/O checks passed")
+	}
 }
 
-func checkGVisor() bool {
+func checkGVisor() error {
 	out, err := runCommand("dmesg")
 	if err != nil {
-		return false
+		return err
 	}
+
+	fmt.Println("dmesg output:", out)
+
 	lower := strings.ToLower(out)
-	return strings.Contains(lower, "gvisor") || strings.Contains(lower, "runsc")
+	if !strings.Contains(lower, "gvisor") && !strings.Contains(lower, "runsc") {
+		return fmt.Errorf("dmesg output does not indicate gVisor")
+	}
+	return nil
 }
 
 func getCapabilities() string {
@@ -137,110 +127,97 @@ func getCapabilities() string {
 	return "Unable to read capabilities"
 }
 
-func getNetworkInterfaces() string {
-	// Try ip addr show
-	if out, err := runCommand("ip", "addr", "show"); err == nil {
-		return out
+func checkTEESocketDoesNotExist() error {
+	_, err := os.Stat("/run/container_launcher/teeserver.sock")
+	if os.IsNotExist(err) {
+		return nil // Expected - socket doesn't exist
 	}
-
-	// Fallback to ifconfig
-	if out, err := runCommand("ifconfig", "-a"); err == nil {
-		return out
+	if err == nil {
+		return fmt.Errorf("TEE socket exists but shouldn't")
 	}
-
-	return "Cannot list interfaces"
+	return err
 }
 
-func getRoutes() string {
-	// Try ip route show
-	if out, err := runCommand("ip", "route", "show"); err == nil {
-		return out
-	}
-
-	// Fallback to route
-	if out, err := runCommand("route", "-n"); err == nil {
-		return out
-	}
-
-	return "Cannot show routes"
-}
-
-func getDNS() string {
-	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
-		return string(data)
-	}
-	return "Cannot read resolv.conf"
-}
-
-func checkTEESocket() bool {
-	teeSocket := "/run/container_launcher/teeserver.sock"
-	if info, err := os.Stat(teeSocket); err == nil && info.Mode()&os.ModeSocket != 0 {
-		return true
-	}
-	return false
-}
-
-func checkInternet() bool {
+func checkInternet() error {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Head("https://example.com")
+	req, err := http.NewRequest("GET", "https://ifconfig.me", nil)
 	if err != nil {
-		return false
+		return err
+	}
+
+	// Set user agent to mimic curl so we get just the IP
+	req.Header.Set("User-Agent", "curl/7.68.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 400
-}
 
-func debugConnectivity() string {
-	var debug strings.Builder
-	fmt.Fprintln(&debug, "\nDebugging connectivity issues:")
-
-	// Test DNS
-	fmt.Fprintln(&debug, "Testing DNS resolution...")
-	if _, err := runCommand("nslookup", "example.com"); err == nil {
-		fmt.Fprintln(&debug, "✓ DNS resolution works")
-	} else if _, err := runCommand("host", "example.com"); err == nil {
-		fmt.Fprintln(&debug, "✓ DNS resolution works (via host)")
-	} else {
-		fmt.Fprintln(&debug, "✗ DNS resolution failed")
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Test ping to 8.8.8.8
-	fmt.Fprintln(&debug, "Testing connectivity to 8.8.8.8...")
-	if _, err := runCommand("ping", "-c", "1", "-W", "2", "8.8.8.8"); err == nil {
-		fmt.Fprintln(&debug, "✓ Can ping 8.8.8.8")
-	} else {
-		fmt.Fprintln(&debug, "✗ Cannot ping 8.8.8.8")
-	}
-
-	// Test gateway
-	if gateway := getGateway(); gateway != "" {
-		fmt.Fprintf(&debug, "Testing connectivity to gateway %s...\n", gateway)
-		if _, err := runCommand("ping", "-c", "1", "-W", "2", gateway); err == nil {
-			fmt.Fprintln(&debug, "✓ Can ping gateway")
-		} else {
-			fmt.Fprintln(&debug, "✗ Cannot ping gateway")
-		}
-	}
-
-	return debug.String()
-}
-
-func getGateway() string {
-	out, err := runCommand("ip", "route", "show")
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return ""
+		return err
 	}
 
-	lines := strings.Split(out, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "default") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				return fields[2]
-			}
+	// Print just the IP address
+	fmt.Printf("External IP: %s\n", strings.TrimSpace(string(body)))
+
+	return nil
+}
+
+func checkFileIO() error {
+	// Create a temporary directory for testing
+	testDir := "/tmp/fileio-test"
+	err := os.MkdirAll(testDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create test directory: %w", err)
+	}
+
+	// Create 100 test files
+	fileCount := 100
+	fmt.Printf("Creating %d test files...\n", fileCount)
+	for i := 0; i < fileCount; i++ {
+		filename := fmt.Sprintf("%s/test-file-%d.txt", testDir, i)
+		content := fmt.Sprintf("Test file %d - timestamp: %s", i, time.Now().Format(time.RFC3339))
+		err := os.WriteFile(filename, []byte(content), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %w", filename, err)
 		}
 	}
-	return ""
+	fmt.Printf("Successfully created %d files\n", fileCount)
+
+	// Verify files exist
+	entries, err := os.ReadDir(testDir)
+	if err != nil {
+		return fmt.Errorf("failed to read test directory: %w", err)
+	}
+	if len(entries) != fileCount {
+		return fmt.Errorf("expected %d files, found %d", fileCount, len(entries))
+	}
+	fmt.Printf("Verified %d files exist\n", len(entries))
+
+	// Delete all test files
+	fmt.Printf("Deleting %d test files...\n", fileCount)
+	for i := 0; i < fileCount; i++ {
+		filename := fmt.Sprintf("%s/test-file-%d.txt", testDir, i)
+		err := os.Remove(filename)
+		if err != nil {
+			return fmt.Errorf("failed to delete file %s: %w", filename, err)
+		}
+	}
+	fmt.Printf("Successfully deleted %d files\n", fileCount)
+
+	// Remove the test directory
+	err = os.Remove(testDir)
+	if err != nil {
+		return fmt.Errorf("failed to remove test directory: %w", err)
+	}
+
+	return nil
 }
 
 func runCommand(name string, args ...string) (string, error) {

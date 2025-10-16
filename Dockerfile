@@ -33,10 +33,7 @@ RUN wget -q https://storage.googleapis.com/gvisor/releases/release/latest/x86_64
 RUN mkdir -p /etc/containerd
 
 # Copy scripts
-COPY test.sh /usr/local/bin/test.sh
-RUN chmod +x /usr/local/bin/test.sh
+COPY run-container.sh /usr/local/bin/run-container.sh
+RUN chmod +x /usr/local/bin/run-container.sh
 
-# Expose port 8080 for external access
-EXPOSE 8080
-
-ENTRYPOINT ["/usr/local/bin/test.sh"]
+ENTRYPOINT ["/usr/local/bin/run-container.sh"]
