@@ -4,7 +4,7 @@ set -e
 
 INSTANCE_NAME="gs-machine"
 MACHINE_TYPE="c3-standard-8"
-IMAGE_FAMILY="confidential-space-debug"
+IMAGE_FAMILY="confidential-space"
 ZONE="us-central1-a"
 PROJECT="data-axiom-440223-j1"
 IMAGE_REF="docker.io/saucelord/cs-sandboxer:latest"

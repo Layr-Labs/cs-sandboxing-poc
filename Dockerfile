@@ -6,7 +6,7 @@ LABEL tee.launch_policy.allow_env_override=IMAGE
 LABEL tee.launch_policy.allow_cgroups=true
 LABEL tee.launch_policy.allow_capabilities=true
 
-# Install containerd, nerdctl, CNI plugins, and dependencies
+# Install containerd, containerd, CNI plugins, and dependencies
 RUN apk add --no-cache \
     containerd \
     containerd-ctr \
@@ -15,12 +15,8 @@ RUN apk add --no-cache \
     wget \
     ca-certificates \
     jq \
-    grep
-
-# Install nerdctl (Docker-compatible CLI for containerd)
-RUN wget -q https://github.com/containerd/nerdctl/releases/download/v1.7.7/nerdctl-1.7.7-linux-amd64.tar.gz && \
-    tar -xzf nerdctl-1.7.7-linux-amd64.tar.gz -C /usr/local/bin/ && \
-    rm nerdctl-1.7.7-linux-amd64.tar.gz
+    grep \
+    curl
 
 # Install CNI plugins for networking
 RUN wget -q https://github.com/containernetworking/plugins/releases/download/v1.5.1/cni-plugins-linux-amd64-v1.5.1.tgz && \
@@ -37,7 +33,10 @@ RUN wget -q https://storage.googleapis.com/gvisor/releases/release/latest/x86_64
 RUN mkdir -p /etc/containerd
 
 # Copy scripts
-COPY run-container.sh /usr/local/bin/run-container.sh
-RUN chmod +x /usr/local/bin/run-container.sh
+COPY test.sh /usr/local/bin/test.sh
+RUN chmod +x /usr/local/bin/test.sh
 
-ENTRYPOINT ["/usr/local/bin/run-container.sh"]
+# Expose port 8080 for external access
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/test.sh"]
