@@ -12,9 +12,10 @@ RUN apk add --no-cache \
     containerd-ctr \
     bash \
     iptables \
-    ip6tables \
     wget \
-    ca-certificates
+    ca-certificates \
+    jq \
+    grep
 
 # Install nerdctl (Docker-compatible CLI for containerd)
 RUN wget -q https://github.com/containerd/nerdctl/releases/download/v1.7.7/nerdctl-1.7.7-linux-amd64.tar.gz && \
@@ -35,7 +36,7 @@ RUN wget -q https://storage.googleapis.com/gvisor/releases/release/latest/x86_64
 # Create containerd config directory
 RUN mkdir -p /etc/containerd
 
-# Copy the runner script
+# Copy scripts
 COPY run-container.sh /usr/local/bin/run-container.sh
 RUN chmod +x /usr/local/bin/run-container.sh
 

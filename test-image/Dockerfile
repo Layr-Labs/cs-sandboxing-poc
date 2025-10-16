@@ -1,10 +1,28 @@
+# Build stage
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+COPY main.go go.mod .
+
+# Build the Go binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o test-app .
+
+# Runtime stage
 FROM alpine:latest
 
-# Install basic tools
-RUN apk add --no-cache bash curl
+# Install necessary tools for diagnostics
+RUN apk add --no-cache \
+    bash \
+    curl \
+    iproute2 \
+    bind-tools \
+    iputils \
+    libcap
 
-# Copy test script
-COPY test.sh /test.sh
-RUN chmod +x /test.sh
+# Copy the binary from builder
+COPY --from=builder /build/test-app /test-app
 
-CMD ["/test.sh"]
+# Expose port for health checks
+EXPOSE 8080
+
+CMD ["/test-app"]
