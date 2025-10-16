@@ -30,11 +30,11 @@ else
     echo "WARNING: /sys/fs/cgroup/cgroup.subtree_control not found, skipping cgroup setup" >&2
 fi
 
-# Create runsc wrapper with host networking
-echo "Creating runsc wrapper with host networking..."
+# Create runsc wrapper (keeping --host for platform mode)
+echo "Creating runsc wrapper..."
 cat > /usr/local/bin/runsc-host <<'EOF'
 #!/bin/sh
-exec /usr/local/bin/runsc --network=host "$@"
+exec /usr/local/bin/runsc "$@"
 EOF
 chmod +x /usr/local/bin/runsc-host
 echo "Runsc wrapper created"
@@ -84,6 +84,7 @@ EXPOSED_PORTS=$(echo "$EXPOSED_PORTS" | xargs)
 
 if [ -z "$EXPOSED_PORTS" ]; then
     echo "No exposed ports detected in image. Continuing without configuring iptables port restrictions."
+    PORT_ARGS=""
 else
     echo "Detected ports: $EXPOSED_PORTS"
 
@@ -93,13 +94,16 @@ else
     iptables -A INPUT -i lo -j ACCEPT
     iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
+    # Build port mapping arguments and configure iptables
+    PORT_ARGS=""
     for PORT in $EXPOSED_PORTS; do
-        echo "  Allowing port $PORT"
+        echo "  Allowing and mapping port $PORT"
         iptables -A INPUT -p tcp --dport "$PORT" -j ACCEPT
+        PORT_ARGS="$PORT_ARGS -p $PORT:$PORT"
     done
 
     iptables -A INPUT -j DROP
-    echo "Iptables configured successfully"
+    echo "Iptables and port mapping configured successfully"
 fi
 
 # Run the container
@@ -108,8 +112,8 @@ LOG_FILE="/tmp/${CONTAINER_NAME}.log"
 echo "Starting container: $CONTAINER_NAME"
 echo "Logs will be written to: $LOG_FILE"
 
-# Start the container in the background and redirect output to log file
-nerdctl --snapshotter=native run --net=host --runtime=runsc-host --name="$CONTAINER_NAME" "$IMAGE" > "$LOG_FILE" 2>&1 &
+# Start the container in the background and redirect output to log file (without --net=host)
+nerdctl --snapshotter=native run $PORT_ARGS --runtime=runsc-host --name="$CONTAINER_NAME" "$IMAGE" > "$LOG_FILE" 2>&1 &
 CONTAINER_PID=$!
 
 # Wait a moment for container to start
