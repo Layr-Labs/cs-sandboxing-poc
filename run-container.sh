@@ -69,34 +69,15 @@ echo "Containerd started successfully (PID: $CONTAINERD_PID)"
 
 # Pull the workload image
 echo "Pulling image: $IMAGE"
-if ! ctr image pull "$IMAGE"; then
+if ! nerdctl --snapshotter=native pull "$IMAGE"; then
     echo "ERROR: Failed to pull image $IMAGE" >&2
     exit 1
 fi
 echo "Image pulled successfully"
 
-# Detect exposed ports from the image by exporting and parsing config
+# Detect exposed ports from the image using nerdctl inspect
 echo "Detecting exposed ports from image..."
-IMAGE_TAR="/tmp/image-$$.tar"
-ctr image export "$IMAGE_TAR" "$IMAGE" 2>/dev/null || {
-    echo "ERROR: Failed to export image for inspection" >&2
-    exit 1
-}
-
-# Extract the config blob digest from manifest
-CONFIG_DIGEST=$(tar -xOf "$IMAGE_TAR" manifest.json 2>/dev/null | jq -r '.[0].Config' 2>/dev/null)
-
-if [ -z "$CONFIG_DIGEST" ] || [ "$CONFIG_DIGEST" = "null" ]; then
-    echo "ERROR: Failed to parse image manifest" >&2
-    rm -f "$IMAGE_TAR"
-    exit 1
-fi
-
-# Extract and parse the config for ExposedPorts
-EXPOSED_PORTS=$(tar -xOf "$IMAGE_TAR" "$CONFIG_DIGEST" 2>/dev/null | jq -r '.config.ExposedPorts // {} | keys[]' 2>/dev/null | sed 's/\/tcp$//' | sed 's/\/udp$//' | tr '\n' ' ')
-
-# Clean up
-rm -f "$IMAGE_TAR"
+EXPOSED_PORTS=$(nerdctl --snapshotter=native image inspect "$IMAGE" | jq -r '.[0].Config.ExposedPorts // {} | keys[]' 2>/dev/null | sed 's/\/tcp$//' | sed 's/\/udp$//' | tr '\n' ' ')
 
 # Trim whitespace
 EXPOSED_PORTS=$(echo "$EXPOSED_PORTS" | xargs)
@@ -128,7 +109,7 @@ echo "Starting container: $CONTAINER_NAME"
 echo "Logs will be written to: $LOG_FILE"
 
 # Start the container in the background and redirect output to log file
-ctr run --net-host --snapshotter native --runc-binary runsc-host "$IMAGE" "$CONTAINER_NAME" > "$LOG_FILE" 2>&1 &
+nerdctl --snapshotter=native run --net=host --runtime=runsc-host --name="$CONTAINER_NAME" "$IMAGE" > "$LOG_FILE" 2>&1 &
 CONTAINER_PID=$!
 
 # Wait a moment for container to start

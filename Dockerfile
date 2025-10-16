@@ -29,6 +29,11 @@ RUN wget -q https://storage.googleapis.com/gvisor/releases/release/latest/x86_64
     chmod +x runsc && \
     mv runsc /usr/local/bin/
 
+# Install nerdctl
+RUN wget -q https://github.com/containerd/nerdctl/releases/download/v1.7.7/nerdctl-1.7.7-linux-amd64.tar.gz && \
+    tar -xzf nerdctl-1.7.7-linux-amd64.tar.gz -C /usr/local/bin/ && \
+    rm nerdctl-1.7.7-linux-amd64.tar.gz
+
 # Create containerd config directory
 RUN mkdir -p /etc/containerd
 
