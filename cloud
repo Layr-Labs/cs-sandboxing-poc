@@ -4,10 +4,10 @@ set -e
 
 INSTANCE_NAME="gs-machine"
 MACHINE_TYPE="c3-standard-8"
-IMAGE_FAMILY="confidential-space-debug"
+IMAGE_FAMILY="confidential-space"
 ZONE="us-central1-a"
 PROJECT="data-axiom-440223-j1"
-IMAGE_REF="docker.io/saucelord/cs-sandbox:latest"
+IMAGE_REF="docker.io/saucelord/cs-sandboxer:latest"
 WORKLOAD_IMAGE="docker.io/saucelord/sandbox-tester:latest"
 
 build() {
@@ -56,6 +56,7 @@ create() {
         --service-account=workload-sa@data-axiom-440223-j1.iam.gserviceaccount.com \
         --scopes=cloud-platform \
         --boot-disk-size=30G \
+        --tags=allow-health-check \
         --zone=$ZONE \
         --project=$PROJECT
 
@@ -74,11 +75,11 @@ logs() {
     fi
 
     # Create logs directory if it doesn't exist
-    mkdir -p logs
+    mkdir -p .logs
 
     # Generate timestamp for log file
     TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    LOG_FILE="logs/log_${TIMESTAMP}.txt"
+    LOG_FILE=".logs/log_${TIMESTAMP}.txt"
 
     echo "Logging to: $LOG_FILE"
 
@@ -86,6 +87,49 @@ logs() {
         gcloud compute instances get-serial-port-output $INSTANCE_NAME | tee -a "$LOG_FILE"
         sleep 1
     done
+}
+
+setup_firewall() {
+    echo "Creating firewall rule to allow health check on port 8080..."
+    gcloud compute firewall-rules create allow-health-check-8080 \
+        --project=$PROJECT \
+        --direction=INGRESS \
+        --priority=1000 \
+        --network=default \
+        --action=ALLOW \
+        --rules=tcp:8080 \
+        --source-ranges=0.0.0.0/0 \
+        --target-tags=allow-health-check \
+        --description="Allow health check access on port 8080"
+
+    echo ""
+    echo "Firewall rule created."
+    echo "Instances with tag 'allow-health-check' can now receive traffic on port 8080."
+}
+
+delete_firewall() {
+    echo "Deleting firewall rule..."
+    gcloud compute firewall-rules delete allow-health-check-8080 \
+        --project=$PROJECT \
+        --quiet
+    echo "Firewall rule deleted."
+}
+
+get_ip() {
+    if [ -n "$2" ]; then
+        INSTANCE_NAME="$2"
+    fi
+
+    EXTERNAL_IP=$(gcloud compute instances describe $INSTANCE_NAME \
+        --zone=$ZONE \
+        --project=$PROJECT \
+        --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+
+    echo ""
+    echo "Instance: $INSTANCE_NAME"
+    echo "External IP: $EXTERNAL_IP"
+    echo ""
+    echo "Health check endpoint: http://$EXTERNAL_IP:8080/health"
 }
 
 case "$1" in
@@ -102,10 +146,19 @@ case "$1" in
         describe "$@"
         ;;
     logs)
-        logs "$@" 
+        logs "$@"
+        ;;
+    setup-firewall)
+        setup_firewall
+        ;;
+    delete-firewall)
+        delete_firewall
+        ;;
+    ip)
+        get_ip "$@"
         ;;
     *)
-        echo "Usage: $0 {build|delete|create|logs}"
+        echo "Usage: $0 {build|delete|create|logs|setup-firewall|delete-firewall|ip}"
         echo ""
         echo "Examples:"
         echo "  $0 build                                       # Build and push container"
@@ -113,9 +166,13 @@ case "$1" in
         echo "  $0 create my-instance                          # Custom instance name"
         echo "  $0 create my-instance my-image:tag             # Custom container image"
         echo "  $0 create my-instance my-image:tag alpine:latest  # Custom workload image"
+        echo "  $0 setup-firewall                              # Create firewall rule for health check"
+        echo "  $0 ip                                          # Get instance IP and health endpoints"
+        echo "  $0 ip my-instance                              # Get IP for specific instance"
         echo "  $0 logs                                        # View logs"
         echo "  $0 logs my-instance                            # View logs for specific instance"
         echo "  $0 delete                                      # Delete instance"
+        echo "  $0 delete-firewall                             # Delete firewall rule"
         exit 1
         ;;
 esac
