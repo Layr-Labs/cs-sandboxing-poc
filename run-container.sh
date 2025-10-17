@@ -30,14 +30,8 @@ else
     echo "WARNING: /sys/fs/cgroup/cgroup.subtree_control not found, skipping cgroup setup" >&2
 fi
 
-# Create runsc wrapper with host networking
-echo "Creating runsc wrapper with host networking..."
-cat > /usr/local/bin/runsc-host <<'EOF'
-#!/bin/sh
-exec /usr/local/bin/runsc --network=host "$@"
-EOF
-chmod +x /usr/local/bin/runsc-host
-echo "Runsc wrapper created"
+echo "Reading ip forwarding status..."
+cat /proc/sys/net/ipv4/ip_forward
 
 # Configure containerd with native snapshotter
 echo "Configuring containerd..."
@@ -75,79 +69,56 @@ if ! nerdctl --snapshotter=native pull "$IMAGE"; then
 fi
 echo "Image pulled successfully"
 
-# Detect exposed ports from the image using nerdctl inspect
-echo "Detecting exposed ports from image..."
-EXPOSED_PORTS=$(nerdctl --snapshotter=native image inspect "$IMAGE" | jq -r '.[0].Config.ExposedPorts // {} | keys[]' 2>/dev/null | sed 's/\/tcp$//' | sed 's/\/udp$//' | tr '\n' ' ')
+# Create nerdctl-managed bridge network (no portmap, just bridge + firewall)
+echo "Creating network..."
+nerdctl network create \
+  --driver bridge \
+  --subnet 10.88.0.0/16 \
+  --gateway 10.88.0.1 \
+  workload-net
 
-# Trim whitespace
-EXPOSED_PORTS=$(echo "$EXPOSED_PORTS" | xargs)
+echo "Running image $IMAGE with gVisor..."
+CONTAINER_ID=$(nerdctl run -d \
+  --snapshotter=native \
+  --runtime=runsc \
+  --network=workload-net \
+  "$IMAGE")
+
+echo "Container started (ID: ${CONTAINER_ID:0:12})"
+
+# Get container IP from CNI state files
+echo "Getting container IP address..."
+CONTAINER_IP=$(ls -t /var/lib/cni/networks/workload-net/ 2>/dev/null | head -1)
+
+if [ -z "$CONTAINER_IP" ] || ! echo "$CONTAINER_IP" | grep -qE '^10\.88\.[0-9]+\.[0-9]+$'; then
+  echo "ERROR: Could not get container IP address from CNI"
+  echo "=== CNI state files ==="
+  ls -la /var/lib/cni/networks/workload-net/ 2>/dev/null || echo "No CNI state files found"
+  nerdctl stop "$CONTAINER_ID" >/dev/null 2>&1
+  nerdctl rm "$CONTAINER_ID" >/dev/null 2>&1
+  exit 1
+fi
+echo "Container IP: $CONTAINER_IP"
+
+# Get exposed ports from the image
+echo "Setting up port forwarding..."
+EXPOSED_PORTS=$(nerdctl image inspect "$IMAGE" 2>/dev/null | jq -r '.[0].Config.ExposedPorts | keys[]' | cut -d'/' -f1 2>/dev/null || echo "")
 
 if [ -z "$EXPOSED_PORTS" ]; then
-    echo "No exposed ports detected in image. Continuing without configuring iptables port restrictions."
+  echo "WARNING: No exposed ports found"
 else
-    echo "Detected ports: $EXPOSED_PORTS"
+  # Forward incoming traffic to container
+  for PORT in $EXPOSED_PORTS; do
+    echo "Forwarding 0.0.0.0:$PORT -> $CONTAINER_IP:$PORT"
+    iptables -t nat -A PREROUTING -p tcp --dport $PORT -j DNAT --to-destination $CONTAINER_IP:$PORT
+    iptables -A FORWARD -d $CONTAINER_IP -p tcp --dport $PORT -j ACCEPT
+  done
 
-    # Configure iptables to expose only detected ports
-    echo "Configuring iptables to expose detected ports..."
-    iptables -F INPUT
-    iptables -A INPUT -i lo -j ACCEPT
-    iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+  # Enable masquerading for container outbound traffic
+  iptables -t nat -A POSTROUTING -s 10.88.0.0/16 -j MASQUERADE
 
-    for PORT in $EXPOSED_PORTS; do
-        echo "  Allowing port $PORT"
-        iptables -A INPUT -p tcp --dport "$PORT" -j ACCEPT
-    done
-
-    iptables -A INPUT -j DROP
-    echo "Iptables configured successfully"
+  echo "Port forwarding configured"
 fi
 
-# Run the container
-CONTAINER_NAME="workload-$(date +%s)"
-LOG_FILE="/tmp/${CONTAINER_NAME}.log"
-echo "Starting container: $CONTAINER_NAME"
-echo "Logs will be written to: $LOG_FILE"
-
-# Start the container in the background and redirect output to log file
-nerdctl --snapshotter=native run --net=host --runtime=runsc-host --name="$CONTAINER_NAME" "$IMAGE" > "$LOG_FILE" 2>&1 &
-CONTAINER_PID=$!
-
-# Wait a moment for container to start
-sleep 2
-
-# Check if container process is still running
-if ! kill -0 $CONTAINER_PID 2>/dev/null; then
-    echo "ERROR: Container failed to start" >&2
-    cat "$LOG_FILE" >&2
-    exit 1
-fi
-
-echo "Container started successfully (PID: $CONTAINER_PID)"
-echo "========================================="
-echo "Container is running. Monitoring logs..."
-echo "========================================="
-
-# Monitor container logs every 5 seconds
-LAST_LINE=0
-while true; do
-    # Check if container is still running
-    if ! kill -0 $CONTAINER_PID 2>/dev/null; then
-        echo ""
-        echo "ERROR: Container process exited" >&2
-        tail -20 "$LOG_FILE" >&2
-        exit 1
-    fi
-
-    # Print new log lines
-    if [ -f "$LOG_FILE" ]; then
-        CURRENT_LINES=$(wc -l < "$LOG_FILE")
-        if [ "$CURRENT_LINES" -gt "$LAST_LINE" ]; then
-            echo ""
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] New logs:"
-            tail -n +$((LAST_LINE + 1)) "$LOG_FILE"
-            LAST_LINE=$CURRENT_LINES
-        fi
-    fi
-
-    sleep 5
-done
+echo "Tailing container logs..."
+nerdctl logs -f "$CONTAINER_ID"
