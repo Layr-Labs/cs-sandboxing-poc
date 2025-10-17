@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"cloud.google.com/go/compute/metadata"
+	"golang.org/x/oauth2/google"
 )
 
 func main() {
@@ -19,6 +23,52 @@ func main() {
 
 	// Run all diagnostics
 	runDiagnostics()
+
+	fmt.Println("GCE summary")
+	fmt.Println("============")
+	fmt.Printf("Running on GCE: %v\n", metadata.OnGCE())
+	if metadata.OnGCE() {
+		projectID, err := metadata.ProjectID()
+		if err != nil {
+			log.Printf("Failed to get project ID: %v", err)
+		} else {
+			fmt.Printf("Project ID: %s\n", projectID)
+		}
+
+		instanceID, err := metadata.InstanceID()
+		if err != nil {
+			log.Printf("Failed to get instance ID: %v", err)
+		} else {
+			fmt.Printf("Instance ID: %s\n", instanceID)
+		}
+
+		zone, err := metadata.Zone()
+		if err != nil {
+			log.Printf("Failed to get zone: %v", err)
+		} else {
+			fmt.Printf("Zone: %s\n", zone)
+		}
+	}
+
+	fmt.Println("\nGoogle Cloud Client Test")
+	fmt.Println("=========================")
+
+	// create a default google client and see if it can get credentials
+	client, err := google.DefaultClient(context.Background())
+	if err != nil {
+		log.Printf("Failed to create Google default client: %v", err)
+	} else {
+		log.Println("Created Google default client successfully")
+		// Get the service account token info
+		resp, err := client.Get("https://www.googleapis.com/oauth2/v1/tokeninfo")
+		if err != nil {
+			log.Printf("Failed to make request with Google client: %v", err)
+		} else {
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("Google client request successful, response: %s", string(body))
+		}
+	}
 
 	// Start HTTP server
 	http.HandleFunc("/health", healthHandler)
