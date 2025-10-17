@@ -20,6 +20,9 @@ func main() {
 	// Run all diagnostics
 	runDiagnostics()
 
+	// Start sending requests in background
+	// go sendRequestsContinuously()
+
 	// Start HTTP server
 	http.HandleFunc("/health", healthHandler)
 
@@ -35,6 +38,46 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+func sendRequestsContinuously() {
+	// Hard-coded target URL
+	targetURL := "https://confidentialcomputing.googleapis.com"
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	// Ticker for 10 requests per second (100ms interval)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	requestCount := 0
+	log.Printf("Starting continuous requests to %s at 10 requests/second\n", targetURL)
+
+	for range ticker.C {
+		requestCount++
+		go func(count int) {
+			req, err := http.NewRequest("GET", targetURL, nil)
+			if err != nil {
+				log.Printf("Request #%d - Failed to create request: %v\n", count, err)
+				return
+			}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				log.Printf("Request #%d - Failed: %v\n", count, err)
+				return
+			}
+			defer resp.Body.Close()
+
+			// Read and discard the body
+			io.Copy(io.Discard, resp.Body)
+
+			log.Printf("Request #%d - Status: %d\n", count, resp.StatusCode)
+		}(requestCount)
+	}
 }
 
 func runDiagnostics() {

@@ -52,7 +52,7 @@ create() {
         --shielded-secure-boot \
         --image-project=confidential-space-images \
         --image-family=$IMAGE_FAMILY \
-        --metadata="^~^tee-image-reference=$IMAGE_REF~tee-container-log-redirect=true~tee-env-IMAGE=$WORKLOAD_IMAGE~tee-cgroup-ns=true~tee-added-capabilities=[\"CAP_SYS_ADMIN\",\"CAP_SYS_RESOURCE\",\"CAP_NET_ADMIN\"]" \
+        --metadata="^~^tee-image-reference=$IMAGE_REF~tee-container-log-redirect=true~tee-env-IMAGE=$WORKLOAD_IMAGE~tee-cgroup-ns=true~tee-added-capabilities=[\"CAP_NET_ADMIN\",\"CAP_SYS_ADMIN\",\"CAP_SYS_RESOURCE\"]" \
         --service-account=workload-sa@data-axiom-440223-j1.iam.gserviceaccount.com \
         --scopes=cloud-platform \
         --boot-disk-size=30G \
