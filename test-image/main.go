@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,13 +13,39 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"cloud.google.com/go/compute/metadata"
+	gotpmutil "github.com/google/go-tpm-tools/verifier/util"
 )
 
 func main() {
 	log.Println("=== Environment & gVisor Test ===")
 
+	ctx := context.Background()
+
 	// Run all diagnostics
 	runDiagnostics()
+
+	projectID, err := metadata.ProjectIDWithContext(ctx)
+	if err != nil {
+		log.Fatalf("Failed to get project ID from metadata server: %v", err)
+	}
+
+	zone, err := metadata.ZoneWithContext(ctx)
+	if err != nil {
+		log.Fatalf("Failed to get zone from metadata server: %v", err)
+	}
+	region := zone[:strings.LastIndex(zone, "-")]
+
+	gcaClient, err := gotpmutil.NewRESTClient(ctx, "https://confidentialcomputing.googleapis.com", projectID, region)
+	if err != nil {
+		log.Fatalf("failed to create REST verifier client: %v", err)
+	}
+	challenge, err := gcaClient.CreateChallenge(ctx)
+	if err != nil {
+		log.Fatalf("failed to create challenge: %v", err)
+	}
+	log.Printf("Successfully created challenge with nonce: %x", *challenge)
 
 	// Start HTTP server
 	http.HandleFunc("/health", healthHandler)

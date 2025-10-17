@@ -2,7 +2,7 @@
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
-COPY main.go go.mod .
+COPY main.go go.mod go.sum ./
 
 # Build the Go binary
 RUN CGO_ENABLED=0 GOOS=linux go build -o test-app .
